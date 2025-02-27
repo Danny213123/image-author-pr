@@ -23,6 +23,7 @@ jobs:
         id: extract
         uses: actions/github-script@v6
         with:
+          github-token: ${{ secrets.PAT_TOKEN }}
           script: |
             const issue = await github.rest.issues.get({
               owner: context.repo.owner,
@@ -98,6 +99,39 @@ jobs:
             
             return { authorName, imageUrl };
             
+      - name: Find image details from GitHub API
+        id: image-api
+        if: steps.extract.outputs.image_url
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.PAT_TOKEN }}
+          script: |
+            const imageUrl = '${{ steps.extract.outputs.image_url }}';
+            console.log(`Analyzing image URL: ${imageUrl}`);
+            
+            // If this is a GitHub asset URL, extract the asset ID
+            let assetId = null;
+            const assetMatch = imageUrl.match(/\/assets\/(\d+)\//);
+            if (assetMatch) {
+              assetId = assetMatch[1];
+              console.log(`Detected asset ID: ${assetId}`);
+              
+              try {
+                // Attempt to get the asset information directly
+                const asset = await github.rest.issues.getLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: assetId,
+                });
+                console.log('Asset information:', asset);
+              } catch (error) {
+                console.log('Could not retrieve asset directly, but this is expected');
+              }
+            }
+            
+            // For GitHub issues, we need to extract the raw image content
+            core.setOutput('asset_id', assetId || '');
+      
       - name: Download Author Image
         id: download
         if: steps.extract.outputs.image_url
@@ -119,22 +153,6 @@ jobs:
           if [[ "$IMAGE_URL" =~ \.(jpg|jpeg|png|gif|webp)($|\?) ]]; then
             EXTENSION="${BASH_REMATCH[1]}"
             echo "Detected extension from URL: $EXTENSION"
-          else
-            # Try to get content type using curl HEAD request
-            echo "Checking content type..."
-            CONTENT_TYPE=$(curl -sI "$IMAGE_URL" | grep -i "content-type:" | head -n 1 | cut -d' ' -f2- | tr -d '\r')
-            echo "Content-Type: $CONTENT_TYPE"
-            
-            if [[ "$CONTENT_TYPE" == *"image/jpeg"* ]]; then
-              EXTENSION="jpg"
-            elif [[ "$CONTENT_TYPE" == *"image/png"* ]]; then
-              EXTENSION="png"
-            elif [[ "$CONTENT_TYPE" == *"image/gif"* ]]; then
-              EXTENSION="gif"
-            elif [[ "$CONTENT_TYPE" == *"image/webp"* ]]; then
-              EXTENSION="webp"
-            fi
-            echo "Determined extension from content type: $EXTENSION"
           fi
           
           # Set final filename with extension
@@ -142,11 +160,14 @@ jobs:
           echo "Final filename: $FINAL_FILENAME"
           
           # Download the image with proper headers for GitHub URLs
-          echo "Downloading image..."
+          echo "Downloading image with authentication..."
           DOWNLOAD_PATH="images/authors/$FINAL_FILENAME"
           
-          curl -L -H "Accept: image/*" -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" \
-            "$IMAGE_URL" -o "$DOWNLOAD_PATH"
+          # Using PAT token for authentication
+          curl -L -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
+               -H "Accept: image/*" \
+               -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" \
+               "$IMAGE_URL" -o "$DOWNLOAD_PATH"
           
           # Verify image was downloaded and is valid
           if [ -f "$DOWNLOAD_PATH" ] && [ -s "$DOWNLOAD_PATH" ]; then
@@ -158,7 +179,22 @@ jobs:
             else
               echo "Downloaded file is not a valid image. Content:"
               head -c 100 "$DOWNLOAD_PATH"
-              exit 1
+              
+              # Try an alternative download method for private GitHub repositories
+              echo "Trying alternative download method..."
+              curl -L -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
+                   -H "Accept: application/vnd.github.v3.raw" \
+                   -H "User-Agent: Mozilla/5.0" \
+                   "$IMAGE_URL" -o "$DOWNLOAD_PATH"
+                   
+              if [ -f "$DOWNLOAD_PATH" ] && [ -s "$DOWNLOAD_PATH" ] && file "$DOWNLOAD_PATH" | grep -q "image"; then
+                echo "Alternative download successful!"
+                echo "image_path=$DOWNLOAD_PATH" >> $GITHUB_OUTPUT
+                echo "sanitized_name=$FINAL_FILENAME" >> $GITHUB_OUTPUT
+              else
+                echo "Both download methods failed to get a valid image"
+                exit 1
+              fi
             fi
           else
             echo "Failed to download image or file is empty"
@@ -215,15 +251,15 @@ jobs:
             Please update the author role, bio, and social links as needed.
             
             Generated from issue #${{ github.event.issue.number }}
-          branch: ${{ github.actor }}-${{ github.event.issue.number }}
+          branch: "new-author/${{ steps.extract.outputs.author_name }}"
           base: main
       
       - name: Comment on Issue
         if: steps.cpr.outputs.pull-request-number
         uses: peter-evans/create-or-update-comment@v3
         with:
-          issue-number: ${{ github.event.issue.number }}
           token: ${{ secrets.PAT_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
           body: |
             ## Author Bio Created
             
