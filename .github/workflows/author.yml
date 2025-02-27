@@ -1,10 +1,10 @@
-name: Extract Author Image
+name: Extract Author Image and Create Bio
 on:
   issues:
     types: [opened]
 
 jobs:
-  extract-author-image:
+  extract-author-info:
     permissions: write-all
     runs-on: ubuntu-latest
     if: startsWith(github.event.issue.title, '[New Author]')
@@ -19,7 +19,7 @@ jobs:
           git config --global user.name "${{ github.actor }}"
           git config --global user.email "${{ github.actor }}@users.noreply.github.com"
           
-      - name: Extract issue information
+      - name: Extract author information
         id: extract
         uses: actions/github-script@v6
         with:
@@ -31,119 +31,111 @@ jobs:
               issue_number: context.issue.number
             });
             
-            // Extract author name from issue title
-            const authorName = issue.data.title.replace('[New Author]', '').trim();
-            console.log(`Author name: ${authorName}`);
+            // Parse the issue body to extract form fields
+            const body = issue.data.body;
             
-            // Get full issue data including comments
-            const comments = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number
-            });
+            // Function to extract field content from the issue body
+            function extractField(body, fieldName) {
+              const regex = new RegExp(`### ${fieldName}\\s*([\\s\\S]*?)(?=###|$)`, 'i');
+              const match = body.match(regex);
+              if (match && match[1]) {
+                return match[1].trim();
+              }
+              return '';
+            }
             
-            // Log the full issue body for debugging
-            console.log("Full issue body:");
-            console.log(issue.data.body);
+            // Extract all author information
+            const authorName = extractField(body, 'Author Name');
+            const authorRole = extractField(body, 'Author Role');
+            const authorBio = extractField(body, 'Author Bio');
+            const githubUsername = extractField(body, 'GitHub Username');
+            const linkedinUrl = extractField(body, 'LinkedIn URL');
+            const twitterUsername = extractField(body, 'Twitter/X Username');
             
-            // Combine issue body and comments for comprehensive search
-            let fullText = issue.data.body;
-            comments.data.forEach(comment => {
-              fullText += '\n' + comment.body;
-            });
+            console.log(`Author Name: ${authorName}`);
+            console.log(`Author Role: ${authorRole}`);
+            console.log(`Author Bio: ${authorBio}`);
+            console.log(`GitHub Username: ${githubUsername}`);
+            console.log(`LinkedIn URL: ${linkedinUrl}`);
+            console.log(`Twitter Username: ${twitterUsername}`);
             
-            // Try all potential patterns for image URLs in GitHub issues
+            // Find an image URL in the Author Picture section
+            const authorPictureSection = extractField(body, 'Author Picture');
+            
+            // Try multiple patterns to find an image URL
             let imageUrl = null;
             
-            // Method 1: Standard markdown image syntax
-            let imageRegex = /!\[(?:.*?)\]\((https:\/\/[^)\s]+)\)/g;
-            let matches = [...fullText.matchAll(imageRegex)];
-            if (matches.length > 0) {
-              imageUrl = matches[0][1];
-              console.log(`Found image URL (markdown syntax): ${imageUrl}`);
+            // Regular markdown image syntax
+            const mdImageRegex = /!\[(?:.*?)\]\((https:\/\/[^)\s]+)\)/g;
+            const mdMatches = [...body.matchAll(mdImageRegex)];
+            if (mdMatches.length > 0) {
+              imageUrl = mdMatches[0][1];
+              console.log(`Found image URL (markdown): ${imageUrl}`);
             }
             
-            // Method 2: GitHub's uploaded image syntax (user-content URLs)
+            // GitHub's user-content URLs
             if (!imageUrl) {
-              imageRegex = /https:\/\/user-images\.githubusercontent\.com\/[^\s)]+/g;
-              matches = [...fullText.matchAll(imageRegex)];
-              if (matches.length > 0) {
-                imageUrl = matches[0][0];
-                console.log(`Found GitHub user-content image URL: ${imageUrl}`);
+              const ghImageRegex = /https:\/\/user-images\.githubusercontent\.com\/[^\s)]+/g;
+              const ghMatches = [...body.matchAll(ghImageRegex)];
+              if (ghMatches.length > 0) {
+                imageUrl = ghMatches[0][0];
+                console.log(`Found GitHub image URL: ${imageUrl}`);
               }
             }
             
-            // Method 3: GitHub's asset image links
+            // GitHub's asset URLs
             if (!imageUrl) {
-              imageRegex = /https:\/\/github\.com\/[^\/]+\/[^\/]+\/assets\/\d+\/[^\s)]+/g;
-              matches = [...fullText.matchAll(imageRegex)];
-              if (matches.length > 0) {
-                imageUrl = matches[0][0];
-                console.log(`Found GitHub asset image URL: ${imageUrl}`);
+              const assetRegex = /https:\/\/github\.com\/[^\/]+\/[^\/]+\/assets\/\d+\/[^\s)]+/g;
+              const assetMatches = [...body.matchAll(assetRegex)];
+              if (assetMatches.length > 0) {
+                imageUrl = assetMatches[0][0];
+                console.log(`Found GitHub asset URL: ${imageUrl}`);
               }
             }
             
-            // Method 4: Any URL ending with image extension
+            // Any URL ending with an image extension
             if (!imageUrl) {
-              const imageExtRegex = /https?:\/\/[^\s)]+\.(jpg|jpeg|png|gif|webp)/gi;
-              const imageExtMatches = [...fullText.matchAll(imageExtRegex)];
-              if (imageExtMatches.length > 0) {
-                imageUrl = imageExtMatches[0][0];
-                console.log(`Found image URL (by extension): ${imageUrl}`);
+              const extRegex = /https?:\/\/[^\s)]+\.(jpg|jpeg|png|gif|webp)/gi;
+              const extMatches = [...body.matchAll(extRegex)];
+              if (extMatches.length > 0) {
+                imageUrl = extMatches[0][0];
+                console.log(`Found image URL by extension: ${imageUrl}`);
               }
             }
             
-            // Store the extracted information
+            // Store outputs
             core.setOutput('author_name', authorName);
+            core.setOutput('author_role', authorRole);
+            core.setOutput('author_bio', authorBio);
+            core.setOutput('github_username', githubUsername);
+            core.setOutput('linkedin_url', linkedinUrl);
+            core.setOutput('twitter_username', twitterUsername);
             core.setOutput('image_url', imageUrl);
             
-            return { authorName, imageUrl };
+            return {
+              authorName,
+              authorRole,
+              authorBio,
+              githubUsername,
+              linkedinUrl,
+              twitterUsername,
+              imageUrl
+            };
             
-      - name: Find image details from GitHub API
-        id: image-api
-        if: steps.extract.outputs.image_url
-        uses: actions/github-script@v6
-        with:
-          github-token: ${{ secrets.PAT_TOKEN }}
-          script: |
-            const imageUrl = '${{ steps.extract.outputs.image_url }}';
-            console.log(`Analyzing image URL: ${imageUrl}`);
-            
-            // If this is a GitHub asset URL, extract the asset ID
-            let assetId = null;
-            const assetMatch = imageUrl.match(/\/assets\/(\d+)\//);
-            if (assetMatch) {
-              assetId = assetMatch[1];
-              console.log(`Detected asset ID: ${assetId}`);
-              
-              try {
-                // Attempt to get the asset information directly
-                const asset = await github.rest.issues.getLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: assetId,
-                });
-                console.log('Asset information:', asset);
-              } catch (error) {
-                console.log('Could not retrieve asset directly, but this is expected');
-              }
-            }
-            
-            // For GitHub issues, we need to extract the raw image content
-            core.setOutput('asset_id', assetId || '');
-      
       - name: Download Author Image
         id: download
-        if: steps.extract.outputs.image_url
+        if: steps.extract.outputs.image_url && steps.extract.outputs.author_name
         run: |
           mkdir -p images/authors
           
-          # Extract filename from URL
+          # Extract information
           IMAGE_URL="${{ steps.extract.outputs.image_url }}"
+          AUTHOR_NAME="${{ steps.extract.outputs.author_name }}"
+          
+          echo "Author name: $AUTHOR_NAME"
           echo "Attempting to download image from: $IMAGE_URL"
           
           # Generate a sanitized filename using the author name
-          AUTHOR_NAME="${{ steps.extract.outputs.author_name }}"
           SANITIZED_NAME=$(echo "$AUTHOR_NAME" | tr -cd '[:alnum:] ._-' | tr ' ' '_' | tr '[:upper:]' '[:lower:]')
           
           # Determine file extension from URL or content type
@@ -153,44 +145,56 @@ jobs:
           if [[ "$IMAGE_URL" =~ \.(jpg|jpeg|png|gif|webp)($|\?) ]]; then
             EXTENSION="${BASH_REMATCH[1]}"
             echo "Detected extension from URL: $EXTENSION"
+          else
+            # Try to get content type using curl HEAD request
+            echo "Checking content type..."
+            CONTENT_TYPE=$(curl -sI -H "Authorization: token ${{ secrets.PAT_TOKEN }}" "$IMAGE_URL" | grep -i "content-type:" | head -n 1 | cut -d' ' -f2- | tr -d '\r')
+            echo "Content-Type: $CONTENT_TYPE"
+            
+            if [[ "$CONTENT_TYPE" == *"image/jpeg"* ]]; then
+              EXTENSION="jpg"
+            elif [[ "$CONTENT_TYPE" == *"image/png"* ]]; then
+              EXTENSION="png"
+            elif [[ "$CONTENT_TYPE" == *"image/gif"* ]]; then
+              EXTENSION="gif"
+            elif [[ "$CONTENT_TYPE" == *"image/webp"* ]]; then
+              EXTENSION="webp"
+            fi
+            echo "Determined extension from content type: $EXTENSION"
           fi
           
-          # Set final filename with extension
+          # Set final filename with extension - Named after the author
           FINAL_FILENAME="${SANITIZED_NAME}.${EXTENSION}"
           echo "Final filename: $FINAL_FILENAME"
           
-          # Download the image with proper headers for GitHub URLs
-          echo "Downloading image with authentication..."
+          # Download path
           DOWNLOAD_PATH="images/authors/$FINAL_FILENAME"
           
-          # Using PAT token for authentication
+          # Download the image with authentication
+          echo "Downloading image with authentication..."
           curl -L -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
                -H "Accept: image/*" \
-               -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" \
+               -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
                "$IMAGE_URL" -o "$DOWNLOAD_PATH"
           
-          # Verify image was downloaded and is valid
+          # Verify the download
           if [ -f "$DOWNLOAD_PATH" ] && [ -s "$DOWNLOAD_PATH" ]; then
-            # Check if file is a valid image using file command
             if file "$DOWNLOAD_PATH" | grep -q "image"; then
+              echo "Successfully downloaded image to: $DOWNLOAD_PATH"
               echo "image_path=$DOWNLOAD_PATH" >> $GITHUB_OUTPUT
-              echo "sanitized_name=$FINAL_FILENAME" >> $GITHUB_OUTPUT
-              echo "Successfully downloaded author image to: $DOWNLOAD_PATH"
+              echo "image_filename=$FINAL_FILENAME" >> $GITHUB_OUTPUT
             else
-              echo "Downloaded file is not a valid image. Content:"
-              head -c 100 "$DOWNLOAD_PATH"
+              echo "Downloaded file is not a valid image. Trying alternative method..."
               
-              # Try an alternative download method for private GitHub repositories
-              echo "Trying alternative download method..."
+              # Alternative download method
               curl -L -H "Authorization: token ${{ secrets.PAT_TOKEN }}" \
                    -H "Accept: application/vnd.github.v3.raw" \
-                   -H "User-Agent: Mozilla/5.0" \
                    "$IMAGE_URL" -o "$DOWNLOAD_PATH"
                    
               if [ -f "$DOWNLOAD_PATH" ] && [ -s "$DOWNLOAD_PATH" ] && file "$DOWNLOAD_PATH" | grep -q "image"; then
                 echo "Alternative download successful!"
                 echo "image_path=$DOWNLOAD_PATH" >> $GITHUB_OUTPUT
-                echo "sanitized_name=$FINAL_FILENAME" >> $GITHUB_OUTPUT
+                echo "image_filename=$FINAL_FILENAME" >> $GITHUB_OUTPUT
               else
                 echo "Both download methods failed to get a valid image"
                 exit 1
@@ -207,24 +211,47 @@ jobs:
         run: |
           mkdir -p _authors
           
-          # Generate author slug from name
+          # Get author info
           AUTHOR_NAME="${{ steps.extract.outputs.author_name }}"
+          AUTHOR_ROLE="${{ steps.extract.outputs.author_role }}"
+          AUTHOR_BIO="${{ steps.extract.outputs.author_bio }}"
+          GITHUB_USERNAME="${{ steps.extract.outputs.github_username }}"
+          LINKEDIN_URL="${{ steps.extract.outputs.linkedin_url }}"
+          TWITTER_USERNAME="${{ steps.extract.outputs.twitter_username }}"
+          
+          # Generate author slug from name
           AUTHOR_SLUG=$(echo "$AUTHOR_NAME" | tr -cd '[:alnum:] ._-' | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
+          
+          # Create social media entries
+          SOCIAL_ENTRIES=""
+          
+          if [ -n "$GITHUB_USERNAME" ]; then
+            SOCIAL_ENTRIES+="  - title: \"github\"\n    url: \"https://github.com/$GITHUB_USERNAME\"\n"
+          else
+            SOCIAL_ENTRIES+="  - title: \"github\"\n    url: \"\"\n"
+          fi
+          
+          if [ -n "$LINKEDIN_URL" ]; then
+            SOCIAL_ENTRIES+="  - title: \"linkedin\"\n    url: \"$LINKEDIN_URL\"\n"
+          else
+            SOCIAL_ENTRIES+="  - title: \"linkedin\"\n    url: \"\"\n"
+          fi
+          
+          if [ -n "$TWITTER_USERNAME" ]; then
+            SOCIAL_ENTRIES+="  - title: \"twitter\"\n    url: \"https://twitter.com/$TWITTER_USERNAME\"\n"
+          else
+            SOCIAL_ENTRIES+="  - title: \"twitter\"\n    url: \"\"\n"
+          fi
           
           # Create author bio markdown file
           cat > "_authors/${AUTHOR_SLUG}.md" << EOF
           ---
-          name: "${{ steps.extract.outputs.author_name }}"
+          name: "$AUTHOR_NAME"
           image: "/${{ steps.download.outputs.image_path }}"
-          role: ""
-          bio: ""
+          role: "$AUTHOR_ROLE"
+          bio: "$AUTHOR_BIO"
           social:
-            - title: "github"
-              url: ""
-            - title: "linkedin"
-              url: ""
-            - title: "twitter"
-              url: ""
+          $SOCIAL_ENTRIES
           ---
           EOF
           
@@ -240,17 +267,20 @@ jobs:
           commit-message: "Add new author: ${{ steps.extract.outputs.author_name }}"
           title: "Add new author: ${{ steps.extract.outputs.author_name }}"
           body: |
-            This PR adds a new author bio for ${{ steps.extract.outputs.author_name }}.
+            ## New Author Bio
             
-            The author image has been downloaded and saved to:
-            `${{ steps.download.outputs.image_path }}`
+            This PR adds a new author profile for **${{ steps.extract.outputs.author_name }}**.
             
-            The author bio file has been created at:
-            `_authors/${{ steps.create-bio.outputs.author_slug }}.md`
+            ### 📄 Added Files:
+            - Author bio: `_authors/${{ steps.create-bio.outputs.author_slug }}.md`
+            - Author image: `${{ steps.download.outputs.image_path }}`
             
-            Please update the author role, bio, and social links as needed.
+            ### 📝 Author Information:
+            - **Name:** ${{ steps.extract.outputs.author_name }}
+            - **Role:** ${{ steps.extract.outputs.author_role }}
+            - **GitHub:** ${{ steps.extract.outputs.github_username }}
             
-            Generated from issue #${{ github.event.issue.number }}
+            This PR was automatically generated from [issue #${{ github.event.issue.number }}](https://github.com/${{ github.repository }}/issues/${{ github.event.issue.number }}).
           branch: ${{ github.actor }}-${{ github.event.issue.number }}
           base: main
       
@@ -261,15 +291,16 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
           body: |
-            ## Author Bio Created
+            ## Author Bio Created ✅
             
-            Thank you for submitting your author information! I've created a pull request with your author bio and image.
+            Thank you for submitting your information! I've created a pull request with your author bio.
             
-            [View Pull Request #${{ steps.cpr.outputs.pull-request-number }}](${{ steps.cpr.outputs.pull-request-url }})
+            ### 🔍 Summary:
+            - Created author bio for: **${{ steps.extract.outputs.author_name }}**
+            - Saved image as: **${{ steps.download.outputs.image_filename }}**
+            - Created Pull Request [#${{ steps.cpr.outputs.pull-request-number }}](${{ steps.cpr.outputs.pull-request-url }})
             
-            The PR includes:
-            - Your author bio file with placeholder information
-            - Your uploaded image
+            The PR with your author bio has been created and is ready for review. Once approved, your profile will be published to the website.
             
-            Please review the PR and update any missing information (role, bio, social links, etc.) directly in the PR.
+            Thank you for your contribution!
           reactions: '+1'
