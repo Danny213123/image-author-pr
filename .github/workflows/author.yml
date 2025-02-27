@@ -1,0 +1,174 @@
+name: Extract Author Image
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  extract-author-image:
+    permissions: write-all
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.issue.title, '[New Author]')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          
+      - name: Set up Git
+        run: |
+          git config --global user.name "${{ github.actor }}"
+          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+          
+      - name: Extract issue information
+        id: extract
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const issue = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            
+            // Extract author name from issue title
+            const authorName = issue.data.title.replace('[New Author]', '').trim();
+            console.log(`Author name: ${authorName}`);
+            
+            // Parse the issue body to find image URLs
+            const body = issue.data.body;
+            
+            // Use regex to find markdown image links
+            const imageRegex = /!\[.*?\]\((.*?)\)/g;
+            const matches = [...body.matchAll(imageRegex)];
+            
+            let imageUrl = null;
+            if (matches.length > 0) {
+              imageUrl = matches[0][1]; // The URL is in the first capture group
+              console.log(`Found image URL: ${imageUrl}`);
+            } else {
+              // Try another approach to find URLs in the issue
+              const urlRegex = /https?:\/\/[^\s)]+\.(jpg|jpeg|png|gif)/gi;
+              const urlMatches = [...body.matchAll(urlRegex)];
+              if (urlMatches.length > 0) {
+                imageUrl = urlMatches[0][0];
+                console.log(`Found image URL: ${imageUrl}`);
+              }
+            }
+            
+            // Store the extracted information
+            core.setOutput('author_name', authorName);
+            core.setOutput('image_url', imageUrl);
+            
+            return { authorName, imageUrl };
+            
+      - name: Download Author Image
+        id: download
+        if: steps.extract.outputs.image_url
+        run: |
+          mkdir -p images/authors
+          
+          # Extract filename from URL
+          IMAGE_URL="${{ steps.extract.outputs.image_url }}"
+          FILENAME=$(basename "$IMAGE_URL" | cut -d'?' -f1)
+          
+          # Generate a sanitized filename using the author name
+          AUTHOR_NAME="${{ steps.extract.outputs.author_name }}"
+          SANITIZED_NAME=$(echo "$AUTHOR_NAME" | tr -cd '[:alnum:] ._-' | tr ' ' '_' | tr '[:upper:]' '[:lower:]')
+          
+          # Add file extension if it doesn't have one
+          if [[ "$SANITIZED_NAME" != *.* ]]; then
+            if [[ "$FILENAME" == *.* ]]; then
+              EXTENSION="${FILENAME##*.}"
+              SANITIZED_NAME="${SANITIZED_NAME}.${EXTENSION}"
+            else
+              # Default to jpg if we can't determine extension
+              SANITIZED_NAME="${SANITIZED_NAME}.jpg"
+            fi
+          fi
+          
+          # Download the image
+          wget -O "images/authors/$SANITIZED_NAME" "$IMAGE_URL" || {
+            echo "Failed to download image using wget, trying curl..."
+            curl -L "$IMAGE_URL" -o "images/authors/$SANITIZED_NAME"
+          }
+          
+          # Verify image was downloaded
+          if [ -f "images/authors/$SANITIZED_NAME" ]; then
+            echo "image_path=images/authors/$SANITIZED_NAME" >> $GITHUB_OUTPUT
+            echo "sanitized_name=$SANITIZED_NAME" >> $GITHUB_OUTPUT
+            echo "Successfully downloaded author image to: images/authors/$SANITIZED_NAME"
+          else
+            echo "Failed to download image"
+            exit 1
+          fi
+      
+      - name: Create Author Bio File
+        if: steps.download.outputs.image_path
+        run: |
+          mkdir -p _authors
+          
+          # Generate author slug from name
+          AUTHOR_NAME="${{ steps.extract.outputs.author_name }}"
+          AUTHOR_SLUG=$(echo "$AUTHOR_NAME" | tr -cd '[:alnum:] ._-' | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
+          
+          # Create author bio markdown file
+          cat > "_authors/${AUTHOR_SLUG}.md" << EOF
+          ---
+          name: "${{ steps.extract.outputs.author_name }}"
+          image: "/${{ steps.download.outputs.image_path }}"
+          role: ""
+          bio: ""
+          social:
+            - title: "github"
+              url: ""
+            - title: "linkedin"
+              url: ""
+            - title: "twitter"
+              url: ""
+          ---
+          EOF
+          
+          echo "Created author bio file: _authors/${AUTHOR_SLUG}.md"
+          echo "author_slug=$AUTHOR_SLUG" >> $GITHUB_OUTPUT
+      
+      - name: Create Pull Request
+        if: steps.download.outputs.image_path
+        id: cpr
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "Add new author: ${{ steps.extract.outputs.author_name }}"
+          title: "Add new author: ${{ steps.extract.outputs.author_name }}"
+          body: |
+            This PR adds a new author bio for ${{ steps.extract.outputs.author_name }}.
+            
+            The author image has been downloaded and saved to:
+            `${{ steps.download.outputs.image_path }}`
+            
+            The author bio file has been created at:
+            `_authors/${{ steps.create-bio.outputs.author_slug }}.md`
+            
+            Please update the author role, bio, and social links as needed.
+            
+            Generated from issue #${{ github.event.issue.number }}
+          branch: "new-author/${{ steps.extract.outputs.author_name }}"
+          base: main
+      
+      - name: Comment on Issue
+        if: steps.cpr.outputs.pull-request-number
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ## Author Bio Created
+            
+            Thank you for submitting your author information! I've created a pull request with your author bio and image.
+            
+            [View Pull Request #${{ steps.cpr.outputs.pull-request-number }}](${{ steps.cpr.outputs.pull-request-url }})
+            
+            The PR includes:
+            - Your author bio file with placeholder information
+            - Your uploaded image
+            
+            Please review the PR and update any missing information (role, bio, social links, etc.) directly in the PR.
+          reactions: '+1'
