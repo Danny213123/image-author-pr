@@ -151,7 +151,7 @@ jobs:
             Please update the author role, bio, and social links as needed.
             
             Generated from issue #${{ github.event.issue.number }}
-          branch: "new-author/${{ steps.extract.outputs.author_name }}"
+          branch: ${{ github.actor }}-${{ github.event.issue.number }}
           base: main
       
       - name: Comment on Issue
