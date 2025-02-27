@@ -34,24 +34,61 @@ jobs:
             const authorName = issue.data.title.replace('[New Author]', '').trim();
             console.log(`Author name: ${authorName}`);
             
-            // Parse the issue body to find image URLs
-            const body = issue.data.body;
+            // Get full issue data including comments
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
             
-            // Use regex to find markdown image links
-            const imageRegex = /!\[.*?\]\((.*?)\)/g;
-            const matches = [...body.matchAll(imageRegex)];
+            // Log the full issue body for debugging
+            console.log("Full issue body:");
+            console.log(issue.data.body);
             
+            // Combine issue body and comments for comprehensive search
+            let fullText = issue.data.body;
+            comments.data.forEach(comment => {
+              fullText += '\n' + comment.body;
+            });
+            
+            // Try all potential patterns for image URLs in GitHub issues
             let imageUrl = null;
+            
+            // Method 1: Standard markdown image syntax
+            let imageRegex = /!\[(?:.*?)\]\((https:\/\/[^)\s]+)\)/g;
+            let matches = [...fullText.matchAll(imageRegex)];
             if (matches.length > 0) {
-              imageUrl = matches[0][1]; // The URL is in the first capture group
-              console.log(`Found image URL: ${imageUrl}`);
-            } else {
-              // Try another approach to find URLs in the issue
-              const urlRegex = /https?:\/\/[^\s)]+\.(jpg|jpeg|png|gif)/gi;
-              const urlMatches = [...body.matchAll(urlRegex)];
-              if (urlMatches.length > 0) {
-                imageUrl = urlMatches[0][0];
-                console.log(`Found image URL: ${imageUrl}`);
+              imageUrl = matches[0][1];
+              console.log(`Found image URL (markdown syntax): ${imageUrl}`);
+            }
+            
+            // Method 2: GitHub's uploaded image syntax (user-content URLs)
+            if (!imageUrl) {
+              imageRegex = /https:\/\/user-images\.githubusercontent\.com\/[^\s)]+/g;
+              matches = [...fullText.matchAll(imageRegex)];
+              if (matches.length > 0) {
+                imageUrl = matches[0][0];
+                console.log(`Found GitHub user-content image URL: ${imageUrl}`);
+              }
+            }
+            
+            // Method 3: GitHub's asset image links
+            if (!imageUrl) {
+              imageRegex = /https:\/\/github\.com\/[^\/]+\/[^\/]+\/assets\/\d+\/[^\s)]+/g;
+              matches = [...fullText.matchAll(imageRegex)];
+              if (matches.length > 0) {
+                imageUrl = matches[0][0];
+                console.log(`Found GitHub asset image URL: ${imageUrl}`);
+              }
+            }
+            
+            // Method 4: Any URL ending with image extension
+            if (!imageUrl) {
+              const imageExtRegex = /https?:\/\/[^\s)]+\.(jpg|jpeg|png|gif|webp)/gi;
+              const imageExtMatches = [...fullText.matchAll(imageExtRegex)];
+              if (imageExtMatches.length > 0) {
+                imageUrl = imageExtMatches[0][0];
+                console.log(`Found image URL (by extension): ${imageUrl}`);
               }
             }
             
@@ -69,40 +106,67 @@ jobs:
           
           # Extract filename from URL
           IMAGE_URL="${{ steps.extract.outputs.image_url }}"
-          FILENAME=$(basename "$IMAGE_URL" | cut -d'?' -f1)
+          echo "Attempting to download image from: $IMAGE_URL"
           
           # Generate a sanitized filename using the author name
           AUTHOR_NAME="${{ steps.extract.outputs.author_name }}"
           SANITIZED_NAME=$(echo "$AUTHOR_NAME" | tr -cd '[:alnum:] ._-' | tr ' ' '_' | tr '[:upper:]' '[:lower:]')
           
-          # Add file extension if it doesn't have one
-          if [[ "$SANITIZED_NAME" != *.* ]]; then
-            if [[ "$FILENAME" == *.* ]]; then
-              EXTENSION="${FILENAME##*.}"
-              SANITIZED_NAME="${SANITIZED_NAME}.${EXTENSION}"
-            else
-              # Default to jpg if we can't determine extension
-              SANITIZED_NAME="${SANITIZED_NAME}.jpg"
+          # Determine file extension from URL or content type
+          EXTENSION="jpg"  # Default
+          
+          # Try to get extension from URL
+          if [[ "$IMAGE_URL" =~ \.(jpg|jpeg|png|gif|webp)($|\?) ]]; then
+            EXTENSION="${BASH_REMATCH[1]}"
+            echo "Detected extension from URL: $EXTENSION"
+          else
+            # Try to get content type using curl HEAD request
+            echo "Checking content type..."
+            CONTENT_TYPE=$(curl -sI "$IMAGE_URL" | grep -i "content-type:" | head -n 1 | cut -d' ' -f2- | tr -d '\r')
+            echo "Content-Type: $CONTENT_TYPE"
+            
+            if [[ "$CONTENT_TYPE" == *"image/jpeg"* ]]; then
+              EXTENSION="jpg"
+            elif [[ "$CONTENT_TYPE" == *"image/png"* ]]; then
+              EXTENSION="png"
+            elif [[ "$CONTENT_TYPE" == *"image/gif"* ]]; then
+              EXTENSION="gif"
+            elif [[ "$CONTENT_TYPE" == *"image/webp"* ]]; then
+              EXTENSION="webp"
             fi
+            echo "Determined extension from content type: $EXTENSION"
           fi
           
-          # Download the image
-          wget -O "images/authors/$SANITIZED_NAME" "$IMAGE_URL" || {
-            echo "Failed to download image using wget, trying curl..."
-            curl -L "$IMAGE_URL" -o "images/authors/$SANITIZED_NAME"
-          }
+          # Set final filename with extension
+          FINAL_FILENAME="${SANITIZED_NAME}.${EXTENSION}"
+          echo "Final filename: $FINAL_FILENAME"
           
-          # Verify image was downloaded
-          if [ -f "images/authors/$SANITIZED_NAME" ]; then
-            echo "image_path=images/authors/$SANITIZED_NAME" >> $GITHUB_OUTPUT
-            echo "sanitized_name=$SANITIZED_NAME" >> $GITHUB_OUTPUT
-            echo "Successfully downloaded author image to: images/authors/$SANITIZED_NAME"
+          # Download the image with proper headers for GitHub URLs
+          echo "Downloading image..."
+          DOWNLOAD_PATH="images/authors/$FINAL_FILENAME"
+          
+          curl -L -H "Accept: image/*" -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" \
+            "$IMAGE_URL" -o "$DOWNLOAD_PATH"
+          
+          # Verify image was downloaded and is valid
+          if [ -f "$DOWNLOAD_PATH" ] && [ -s "$DOWNLOAD_PATH" ]; then
+            # Check if file is a valid image using file command
+            if file "$DOWNLOAD_PATH" | grep -q "image"; then
+              echo "image_path=$DOWNLOAD_PATH" >> $GITHUB_OUTPUT
+              echo "sanitized_name=$FINAL_FILENAME" >> $GITHUB_OUTPUT
+              echo "Successfully downloaded author image to: $DOWNLOAD_PATH"
+            else
+              echo "Downloaded file is not a valid image. Content:"
+              head -c 100 "$DOWNLOAD_PATH"
+              exit 1
+            fi
           else
-            echo "Failed to download image"
+            echo "Failed to download image or file is empty"
             exit 1
           fi
       
       - name: Create Author Bio File
+        id: create-bio
         if: steps.download.outputs.image_path
         run: |
           mkdir -p _authors
@@ -134,7 +198,7 @@ jobs:
       - name: Create Pull Request
         if: steps.download.outputs.image_path
         id: cpr
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.PAT_TOKEN }}
           commit-message: "Add new author: ${{ steps.extract.outputs.author_name }}"
@@ -151,15 +215,15 @@ jobs:
             Please update the author role, bio, and social links as needed.
             
             Generated from issue #${{ github.event.issue.number }}
-          branch: ${{ github.actor }}-${{ github.event.issue.number }}
+          branch: "new-author/${{ steps.extract.outputs.author_name }}"
           base: main
       
       - name: Comment on Issue
         if: steps.cpr.outputs.pull-request-number
         uses: peter-evans/create-or-update-comment@v3
         with:
-          token: ${{ secrets.PAT_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
+          token: ${{ secrets.PAT_TOKEN }}
           body: |
             ## Author Bio Created
             
