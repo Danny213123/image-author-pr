@@ -9,8 +9,6 @@ body:
       value: |
         ## Thanks for adding your author bio!
 
-        > **IMPORTANT NOTE:** Please ensure that you have placed your author image and author bio in the correct area.
-
         > **IMPORTANT NOTE:** All fields in this form are required to successfully create an author bio. Missing information will cause the automated system to reject your submission. Please complete all sections thoroughly and double check your responses.
 
     validations:
