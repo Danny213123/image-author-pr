@@ -301,7 +301,7 @@ jobs:
 
             ### **IMPORTANT** Conf.py Update:
 
-            **Add the following entry to conf.py under the `author_mapping` dictionary:**
+            **Add the following entry to conf.py under the `blog_authors`:**
             
             ```python
             ${{ steps.config-entry.outputs.config_entry }}
