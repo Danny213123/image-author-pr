@@ -263,22 +263,6 @@ jobs:
             echo "bio_created=false" >> $GITHUB_OUTPUT
             exit 1
           fi
-
-      - name: Generate Config Entry
-        id: config-entry
-        if: steps.set-output.outputs.bio_created == 'true'
-        run: |
-          AUTHOR_NAME="${{ steps.extract.outputs.author_name }}"
-          AUTHOR_MARKDOWN=$(echo "$AUTHOR_NAME" | tr -cd '[:alnum:] ._-' | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
-          
-          CONFIG_ENTRY='"'"$AUTHOR_NAME"'": (
-                "'"$AUTHOR_NAME"'",
-                "http://rocm.blogs.amd.com/authors/'"$AUTHOR_MARKDOWN"'.html",
-            ),'
-          
-          echo "config_entry<<EOF" >> $GITHUB_OUTPUT
-          echo "$CONFIG_ENTRY" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
       
       - name: Create Pull Request
         if: steps.set-output.outputs.bio_created == 'true'
@@ -296,16 +280,7 @@ jobs:
              ### 📋 Next Steps
             
             - [ ] **Review the Author Bio** carefully for any mistakes or adjustments needed
-            - [ ] **Modify the conf.py** with new author information, otherwise the bio will not render as a link
             - [ ] **Final Review**, make sure everything is working properly
-
-            ### **IMPORTANT** Conf.py Update:
-
-            **Add the following entry to conf.py under the `blog_authors`:**
-            
-            ```python
-            ${{ steps.config-entry.outputs.config_entry }}
-            ```
             
             ### 📄 Added Files:
             - Author bio: `blogs/authors/${{ steps.set-output.outputs.AUTHOR_MARKDOWN }}.md`
