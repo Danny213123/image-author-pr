@@ -10,7 +10,7 @@ jobs:
     if: startsWith(github.event.issue.title, '[New Author]')
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           
@@ -31,10 +31,8 @@ jobs:
               issue_number: context.issue.number
             });
             
-            // Parse the issue body to extract form fields
             const body = issue.data.body;
             
-            // Function to extract field content from the issue body
             function extractField(body, fieldName) {
               const regex = new RegExp(`### ${fieldName}\\s*([\\s\\S]*?)(?=###|$)`, 'i');
               const match = body.match(regex);
@@ -44,28 +42,18 @@ jobs:
               return '';
             }
             
-            // Extract all author information
             const authorName = extractField(body, 'Author Name');
-            const authorRole = extractField(body, 'Author Role');
             const authorBio = extractField(body, 'Author Bio');
-            const githubUsername = extractField(body, 'GitHub Username');
-            const linkedinUrl = extractField(body, 'LinkedIn URL');
-            const twitterUsername = extractField(body, 'Twitter/X Username');
             
             console.log(`Author Name: ${authorName}`);
-            console.log(`Author Role: ${authorRole}`);
             console.log(`Author Bio: ${authorBio}`);
-            console.log(`GitHub Username: ${githubUsername}`);
-            console.log(`LinkedIn URL: ${linkedinUrl}`);
-            console.log(`Twitter Username: ${twitterUsername}`);
             
-            // Find an image URL in the Author Picture section
             const authorPictureSection = extractField(body, 'Author Picture');
             
             // Try multiple patterns to find an image URL
             let imageUrl = null;
             
-            // Regular markdown image syntax
+            // Look for any image markdown format
             const mdImageRegex = /!\[(?:.*?)\]\((https:\/\/[^)\s]+)\)/g;
             const mdMatches = [...body.matchAll(mdImageRegex)];
             if (mdMatches.length > 0) {
@@ -73,7 +61,7 @@ jobs:
               console.log(`Found image URL (markdown): ${imageUrl}`);
             }
             
-            // GitHub's user-content URLs
+            // Grab github image link
             if (!imageUrl) {
               const ghImageRegex = /https:\/\/user-images\.githubusercontent\.com\/[^\s)]+/g;
               const ghMatches = [...body.matchAll(ghImageRegex)];
@@ -103,22 +91,13 @@ jobs:
               }
             }
             
-            // Store outputs
             core.setOutput('author_name', authorName);
-            core.setOutput('author_role', authorRole);
             core.setOutput('author_bio', authorBio);
-            core.setOutput('github_username', githubUsername);
-            core.setOutput('linkedin_url', linkedinUrl);
-            core.setOutput('twitter_username', twitterUsername);
             core.setOutput('image_url', imageUrl);
             
             return {
               authorName,
-              authorRole,
               authorBio,
-              githubUsername,
-              linkedinUrl,
-              twitterUsername,
               imageUrl
             };
             
@@ -126,7 +105,7 @@ jobs:
         id: download
         if: steps.extract.outputs.image_url && steps.extract.outputs.author_name
         run: |
-          mkdir -p images/authors
+          mkdir -p blogs/authors/data
           
           # Extract information
           IMAGE_URL="${{ steps.extract.outputs.image_url }}"
@@ -135,13 +114,12 @@ jobs:
           echo "Author name: $AUTHOR_NAME"
           echo "Attempting to download image from: $IMAGE_URL"
           
-          # Generate a sanitized filename using the author name
-          SANITIZED_NAME=$(echo "$AUTHOR_NAME" | tr -cd '[:alnum:] ._-' | tr ' ' '_' | tr '[:upper:]' '[:lower:]')
+          # Generate a sanitized filename using the author name (with dashes instead of underscores)
+          SANITIZED_NAME=$(echo "$AUTHOR_NAME" | tr -cd '[:alnum:] ._-' | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
           
           # Determine file extension from URL or content type
           EXTENSION="jpg"  # Default
           
-          # Try to get extension from URL
           if [[ "$IMAGE_URL" =~ \.(jpg|jpeg|png|gif|webp)($|\?) ]]; then
             EXTENSION="${BASH_REMATCH[1]}"
             echo "Detected extension from URL: $EXTENSION"
@@ -163,12 +141,12 @@ jobs:
             echo "Determined extension from content type: $EXTENSION"
           fi
           
-          # Set final filename with extension - Named after the author
+          # Set final filename with extension - Named after the author with proper capitalization
           FINAL_FILENAME="${SANITIZED_NAME}.${EXTENSION}"
           echo "Final filename: $FINAL_FILENAME"
           
           # Download path
-          DOWNLOAD_PATH="images/authors/$FINAL_FILENAME"
+          DOWNLOAD_PATH="blogs/authors/data/$FINAL_FILENAME"
           
           # Download the image with authentication
           echo "Downloading image with authentication..."
@@ -209,59 +187,42 @@ jobs:
         id: create-bio
         if: steps.download.outputs.image_path
         run: |
-          mkdir -p _authors
+          mkdir -p blogs/authors
           
           # Get author info
           AUTHOR_NAME="${{ steps.extract.outputs.author_name }}"
-          AUTHOR_ROLE="${{ steps.extract.outputs.author_role }}"
           AUTHOR_BIO="${{ steps.extract.outputs.author_bio }}"
-          GITHUB_USERNAME="${{ steps.extract.outputs.github_username }}"
-          LINKEDIN_URL="${{ steps.extract.outputs.linkedin_url }}"
-          TWITTER_USERNAME="${{ steps.extract.outputs.twitter_username }}"
           
-          # Generate author slug from name
-          AUTHOR_SLUG=$(echo "$AUTHOR_NAME" | tr -cd '[:alnum:] ._-' | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
+          AUTHOR_MARKDOWN=$(echo "$AUTHOR_NAME" | tr -cd '[:alnum:] ._-' | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
+          IMAGE_FILENAME="${{ steps.download.outputs.image_filename }}"
           
-          # Create social media entries
-          SOCIAL_ENTRIES=""
-          
-          if [ -n "$GITHUB_USERNAME" ]; then
-            SOCIAL_ENTRIES+="  - title: \"github\"\n    url: \"https://github.com/$GITHUB_USERNAME\"\n"
-          else
-            SOCIAL_ENTRIES+="  - title: \"github\"\n    url: \"\"\n"
-          fi
-          
-          if [ -n "$LINKEDIN_URL" ]; then
-            SOCIAL_ENTRIES+="  - title: \"linkedin\"\n    url: \"$LINKEDIN_URL\"\n"
-          else
-            SOCIAL_ENTRIES+="  - title: \"linkedin\"\n    url: \"\"\n"
-          fi
-          
-          if [ -n "$TWITTER_USERNAME" ]; then
-            SOCIAL_ENTRIES+="  - title: \"twitter\"\n    url: \"https://twitter.com/$TWITTER_USERNAME\"\n"
-          else
-            SOCIAL_ENTRIES+="  - title: \"twitter\"\n    url: \"\"\n"
-          fi
-          
-          # Create author bio markdown file
-          cat > "_authors/${AUTHOR_SLUG}.md" << EOF
-          ---
-          name: "$AUTHOR_NAME"
-          image: "/${{ steps.download.outputs.image_path }}"
-          role: "$AUTHOR_ROLE"
-          bio: "$AUTHOR_BIO"
-          social:
-          $SOCIAL_ENTRIES
-          ---
+          # Create author bio markdown file in the required format
+          cat > "blogs/authors/${AUTHOR_MARKDOWN}.md" << EOF
+          <head>
+            <meta charset="UTF-8">
+            <meta name="description" content="${AUTHOR_NAME}">
+            <meta name="keywords" content="blog, contributor, blog author">
+          </head>
+          (name)=
+          # ${AUTHOR_NAME}
+          \`\`\`{image} ./data/${IMAGE_FILENAME}
+          :alt: ${AUTHOR_NAME}
+          :class: bg-primary
+          :height: 250px
+          :align: left
+          \`\`\`
+          ${AUTHOR_BIO}
           EOF
           
-          echo "Created author bio file: _authors/${AUTHOR_SLUG}.md"
-          echo "author_slug=$AUTHOR_SLUG" >> $GITHUB_OUTPUT
+          # Add social links if needed in a future update
+          
+          echo "Created author bio file: blogs/authors/${AUTHOR_MARKDOWN}.md"
+          echo "AUTHOR_MARKDOWN=$AUTHOR_MARKDOWN" >> $GITHUB_OUTPUT
       
       - name: Create Pull Request
-        if: steps.download.outputs.image_path
+        if: steps.create-bio.outputs.AUTHOR_MARKDOWN
         id: cpr
-        uses: peter-evans/create-pull-request@v5
+        uses: peter-evans/create-pull-request@v7.0.6
         with:
           token: ${{ secrets.PAT_TOKEN }}
           commit-message: "Add new author: ${{ steps.extract.outputs.author_name }}"
@@ -272,16 +233,14 @@ jobs:
             This PR adds a new author profile for **${{ steps.extract.outputs.author_name }}**.
             
             ### 📄 Added Files:
-            - Author bio: `_authors/${{ steps.create-bio.outputs.author_slug }}.md`
+            - Author bio: `blogs/authors/${{ steps.create-bio.outputs.AUTHOR_MARKDOWN }}.md`
             - Author image: `${{ steps.download.outputs.image_path }}`
             
             ### 📝 Author Information:
             - **Name:** ${{ steps.extract.outputs.author_name }}
-            - **Role:** ${{ steps.extract.outputs.author_role }}
-            - **GitHub:** ${{ steps.extract.outputs.github_username }}
             
             This PR was automatically generated from [issue #${{ github.event.issue.number }}](https://github.com/${{ github.repository }}/issues/${{ github.event.issue.number }}).
-          branch: ${{ github.actor }}-${{ github.event.issue.number }}
+          branch: author-${{ steps.create-bio.outputs.AUTHOR_MARKDOWN }}-${{ github.event.issue.number }}
           base: main
       
       - name: Comment on Issue
@@ -297,7 +256,7 @@ jobs:
             
             ### 🔍 Summary:
             - Created author bio for: **${{ steps.extract.outputs.author_name }}**
-            - Saved image as: **${{ steps.download.outputs.image_filename }}**
+            - Saved image as: `blogs/authors/data/${{ steps.download.outputs.image_filename }}`
             - Created Pull Request [#${{ steps.cpr.outputs.pull-request-number }}](${{ steps.cpr.outputs.pull-request-url }})
             
             The PR with your author bio has been created and is ready for review. Once approved, your profile will be published to the website.
