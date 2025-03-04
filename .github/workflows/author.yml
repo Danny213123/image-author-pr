@@ -26,94 +26,105 @@ jobs:
         with:
           github-token: ${{ secrets.PAT_TOKEN }}
           script: |
-            const issue = await github.rest.issues.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number
-            });
-            
-            const body = issue.data.body;
-            
-            function extractField(body, fieldName) {
-              const regex = new RegExp(`### ${fieldName}\\s*([\\s\\S]*?)(?=###|$)`, 'i');
-              const match = body.match(regex);
-              if (match && match[1]) {
-                return match[1].trim();
+            try {
+              // Create an authenticated client with explicit token
+              const octokit = github.getOctokit(process.env.PAT_TOKEN);
+              
+              const issue = await octokit.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number
+              });
+              
+              const body = issue.data.body;
+              
+              function extractField(body, fieldName) {
+                const regex = new RegExp(`### ${fieldName}\\s*([\\s\\S]*?)(?=###|$)`, 'i');
+                const match = body.match(regex);
+                if (match && match[1]) {
+                  return match[1].trim();
+                }
+                return '';
               }
-              return '';
-            }
-            
-            const authorName = extractField(body, 'Author Name');
-            const authorBio = extractField(body, 'Author Bio');
-            
-            // Validate required fields
-            if (!authorName) {
-              console.error('Author Name is missing from the issue');
-              core.setFailed('Author Name is required but was not found in the issue');
+              
+              const authorName = extractField(body, 'Author Name');
+              const authorBio = extractField(body, 'Author Bio');
+              
+              // Validate required fields
+              if (!authorName) {
+                console.error('Author Name is missing from the issue');
+                core.setFailed('Author Name is required but was not found in the issue');
+                return null;
+              }
+              
+              if (!authorBio) {
+                console.error('Author Bio is missing from the issue');
+                core.setFailed('Author Bio is required but was not found in the issue');
+                return null;
+              }
+              
+              console.log(`Author Name: ${authorName}`);
+              console.log(`Author Bio: ${authorBio}`);
+              
+              const authorPictureSection = extractField(body, 'Author Picture');
+              
+              // Try multiple patterns to find an image URL
+              let imageUrl = null;
+              
+              // Look for any image markdown format
+              const markdownImage = /!\[(?:.*?)\]\((https:\/\/[^)\s]+)\)/g;
+              const markdownMatch = [...body.matchAll(markdownImage)];
+              if (markdownMatch.length > 0) {
+                imageUrl = markdownMatch[0][1];
+                console.log(`Found image URL (markdown): ${imageUrl}`);
+              }
+              
+              // Grab github image link
+              if (!imageUrl) {
+                const gitImage = /https:\/\/user-images\.githubusercontent\.com\/[^\s)]+/g;
+                const gitMatch = [...body.matchAll(gitImage)];
+                if (gitMatch.length > 0) {
+                  imageUrl = gitMatch[0][0];
+                  console.log(`Found GitHub image URL: ${imageUrl}`);
+                }
+              }
+              
+              // GitHub's asset URLs
+              if (!imageUrl) {
+                const assetRegex = /https:\/\/github\.com\/[^\/]+\/[^\/]+\/assets\/\d+\/[^\s)]+/g;
+                const assetMatches = [...body.matchAll(assetRegex)];
+                if (assetMatches.length > 0) {
+                  imageUrl = assetMatches[0][0];
+                  console.log(`Found GitHub asset URL: ${imageUrl}`);
+                }
+              }
+              
+              // Any URL ending with an image extension
+              if (!imageUrl) {
+                const extension = /https?:\/\/[^\s)]+\.(jpg|jpeg|png|gif|webp)/gi;
+                const extMatches = [...body.matchAll(extension)];
+                if (extMatches.length > 0) {
+                  imageUrl = extMatches[0][0];
+                  console.log(`Found image URL by extension: ${imageUrl}`);
+                }
+              }
+              
+              core.setOutput('author_name', authorName);
+              core.setOutput('author_bio', authorBio);
+              core.setOutput('image_url', imageUrl || '');
+              
+              return {
+                authorName,
+                authorBio,
+                imageUrl
+              };
+            } catch (error) {
+              console.error('Error in extract step:', error.message);
+              core.setFailed(`Error accessing issue: ${error.message}`);
               return null;
             }
-            
-            if (!authorBio) {
-              console.error('Author Bio is missing from the issue');
-              core.setFailed('Author Bio is required but was not found in the issue');
-              return null;
-            }
-            
-            console.log(`Author Name: ${authorName}`);
-            console.log(`Author Bio: ${authorBio}`);
-            
-            const authorPictureSection = extractField(body, 'Author Picture');
-            
-            // Try multiple patterns to find an image URL
-            let imageUrl = null;
-            
-            // Look for any image markdown format
-            const markdownImage = /!\[(?:.*?)\]\((https:\/\/[^)\s]+)\)/g;
-            const markdownMatch = [...body.matchAll(markdownImage)];
-            if (markdownMatch.length > 0) {
-              imageUrl = markdownMatch[0][1];
-              console.log(`Found image URL (markdown): ${imageUrl}`);
-            }
-            
-            // Grab github image link
-            if (!imageUrl) {
-              const gitImage = /https:\/\/user-images\.githubusercontent\.com\/[^\s)]+/g;
-              const gitMatch = [...body.matchAll(gitImage)];
-              if (gitMatch.length > 0) {
-                imageUrl = gitMatch[0][0];
-                console.log(`Found GitHub image URL: ${imageUrl}`);
-              }
-            }
-            
-            // GitHub's asset URLs
-            if (!imageUrl) {
-              const assetRegex = /https:\/\/github\.com\/[^\/]+\/[^\/]+\/assets\/\d+\/[^\s)]+/g;
-              const assetMatches = [...body.matchAll(assetRegex)];
-              if (assetMatches.length > 0) {
-                imageUrl = assetMatches[0][0];
-                console.log(`Found GitHub asset URL: ${imageUrl}`);
-              }
-            }
-            
-            // Any URL ending with an image extension
-            if (!imageUrl) {
-              const extension = /https?:\/\/[^\s)]+\.(jpg|jpeg|png|gif|webp)/gi;
-              const extMatches = [...body.matchAll(extension)];
-              if (extMatches.length > 0) {
-                imageUrl = extMatches[0][0];
-                console.log(`Found image URL by extension: ${imageUrl}`);
-              }
-            }
-            
-            core.setOutput('author_name', authorName);
-            core.setOutput('author_bio', authorBio);
-            core.setOutput('image_url', imageUrl || '');
-            
-            return {
-              authorName,
-              authorBio,
-              imageUrl
-            };
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
             
       - name: Download Author Image
         id: download
