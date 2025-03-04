@@ -203,15 +203,20 @@ jobs:
             <meta name="description" content="${AUTHOR_NAME}">
             <meta name="keywords" content="blog, contributor, blog author">
           </head>
-          (name)=
+          
+          (${AUTHOR_NAME})=
+          
           # ${AUTHOR_NAME}
+          
           \`\`\`{image} ./data/${IMAGE_FILENAME}
           :alt: ${AUTHOR_NAME}
           :class: bg-primary
           :height: 250px
           :align: left
           \`\`\`
+          
           ${AUTHOR_BIO}
+          
           EOF
           
           # Add social links if needed in a future update
