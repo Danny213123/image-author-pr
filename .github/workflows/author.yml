@@ -68,19 +68,19 @@ jobs:
             let imageUrl = null;
             
             // Look for any image markdown format
-            const mdImageRegex = /!\[(?:.*?)\]\((https:\/\/[^)\s]+)\)/g;
-            const mdMatches = [...body.matchAll(mdImageRegex)];
-            if (mdMatches.length > 0) {
-              imageUrl = mdMatches[0][1];
+            const markdownImage = /!\[(?:.*?)\]\((https:\/\/[^)\s]+)\)/g;
+            const markdownMatch = [...body.matchAll(markdownImage)];
+            if (markdownMatch.length > 0) {
+              imageUrl = markdownMatch[0][1];
               console.log(`Found image URL (markdown): ${imageUrl}`);
             }
             
             // Grab github image link
             if (!imageUrl) {
-              const ghImageRegex = /https:\/\/user-images\.githubusercontent\.com\/[^\s)]+/g;
-              const ghMatches = [...body.matchAll(ghImageRegex)];
-              if (ghMatches.length > 0) {
-                imageUrl = ghMatches[0][0];
+              const gitImage = /https:\/\/user-images\.githubusercontent\.com\/[^\s)]+/g;
+              const gitMatch = [...body.matchAll(gitImage)];
+              if (gitMatch.length > 0) {
+                imageUrl = gitMatch[0][0];
                 console.log(`Found GitHub image URL: ${imageUrl}`);
               }
             }
@@ -97,8 +97,8 @@ jobs:
             
             // Any URL ending with an image extension
             if (!imageUrl) {
-              const extRegex = /https?:\/\/[^\s)]+\.(jpg|jpeg|png|gif|webp)/gi;
-              const extMatches = [...body.matchAll(extRegex)];
+              const extension = /https?:\/\/[^\s)]+\.(jpg|jpeg|png|gif|webp)/gi;
+              const extMatches = [...body.matchAll(extension)];
               if (extMatches.length > 0) {
                 imageUrl = extMatches[0][0];
                 console.log(`Found image URL by extension: ${imageUrl}`);
