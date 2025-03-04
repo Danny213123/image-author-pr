@@ -1,7 +1,7 @@
 name: "Create a new author bio"
 description: "Submit this form to automatically create a new author bio"
 title: "[New Author] "
-labels: ["Author Bio Creation"]
+labels: ["Author Creation"]
 body:
   - type: markdown
     id: markdown_with_multiline_content
